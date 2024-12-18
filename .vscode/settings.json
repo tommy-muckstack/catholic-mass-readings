@@ -1,0 +1,10 @@
+{
+    "files.trimTrailingWhitespace": true,
+    "workbench.editor.enablePreview": false,
+    "editor.formatOnSave": true,
+    "files.exclude": {
+        "**/.mypy_cache": true,
+        "**/.pytest_cache": true,
+        "**/.ruff_cache": true,
+    }
+}
