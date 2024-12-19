@@ -18,12 +18,12 @@ sys.path.insert(0, os.path.abspath("../.."))  # noqa: PTH100
 
 # -- Project information -----------------------------------------------------
 
-project = "zipcode-coordinates-tz"
+project = "catholic-mass-readings"
 copyright = "2024, Robert Colfin"  # noqa: A001
 author = "Robert Colfin"
 
 # The full version, including alpha/beta/rc tags
-release = "0.1.2"
+release = "0.1.0"
 
 
 # -- General configuration ---------------------------------------------------
@@ -64,16 +64,16 @@ html_static_path = ["_static"]
 # Material theme options (see theme.conf for more information)
 html_theme_options = {
     # Set the name of the project to appear in the navigation.
-    "nav_title": "zipcode-coordinates-tz DOCS",
+    "nav_title": "catholic-mass-readings DOCS",
     # Specify a base_url used to generate sitemap.xml. If not
     # specified, then no sitemap will be built.
-    "base_url": "https://rcolfin.github.io/zipcode-coordinates-tz/",
+    "base_url": "https://rcolfin.github.io/catholic-mass-readings/",
     # Set the color and the accent color
     "color_primary": "blue",
     "color_accent": "light-blue",
     # Set the repo location to get a badge with stats
-    "repo_url": "https://github.com/rcolfin/zipcode-coordinates-tz",
-    "repo_name": "zipcode-coordinates-tz",
+    "repo_url": "https://github.com/rcolfin/catholic-mass-readings",
+    "repo_name": "catholic-mass-readings",
     # Visible levels of the global TOC; -1 means unlimited
     "globaltoc_depth": 3,
     # If False, expand all TOC entries

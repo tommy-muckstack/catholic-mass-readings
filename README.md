@@ -24,6 +24,7 @@ Run [scripts/console.sh](../scripts/console.sh) poetry run catholic_mass_reading
 ## API Usage:
 
 ```python
+import asyncio
 import datetime
 
 from catholic_mass_readings import USCCB

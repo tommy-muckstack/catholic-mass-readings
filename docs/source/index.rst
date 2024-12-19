@@ -45,7 +45,7 @@ Examples
 The following example queries for the mass on a particular date:
 
 .. code-block:: Python
-
+    import asyncio
     import datetime
 
     from catholic_mass_readings import USCCB
