@@ -84,3 +84,16 @@ python -m catholic_mass_readings get-sunday-mass-range --start 2024-12-25 --end 
 # To query for a range of masses (step how you want to):
 python -m catholic_mass_readings get-mass-range --start 2024-12-25 --end 2025-01-01 --step 7 --save mass.json
 ```
+
+## Installation
+
+To install catholic-mass-readings from PyPI, use the following command:
+
+    $ pip install catholic-mass-readings
+
+You can also clone the repo and run the following command in the project root to install the source code as editable:
+
+    $ pip install -e .
+
+## Documentation
+The documentation for `catholic-mass-readings` can be found [here](https://rcolfin.github.io/catholic-mass-readings/) or in the project's docstrings.
