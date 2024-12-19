@@ -20,10 +20,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-"""Interface for querying the Daily Readings from https://bible.usccb.org/bible/readings/"""
-
-
 class USCCB:
+    """Interface for querying the Daily Readings from https://bible.usccb.org/bible/readings/"""
+
     def __init__(self) -> None:
         self._session: aiohttp.ClientSession | None = None
 
