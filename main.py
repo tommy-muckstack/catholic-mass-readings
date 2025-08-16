@@ -10,6 +10,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, date
 import logging
 import os
+import sys
 
 # Import the catholic-mass-readings library (local copy)
 from usccb import USCCB
@@ -210,6 +211,84 @@ async def test_library():
         return {
             "library_working": False,
             "error": str(e)
+        }
+
+@app.get("/debug")
+async def debug_production():
+    """Debug endpoint to understand production environment issues"""
+    import aiohttp
+    from bs4 import BeautifulSoup
+    from datetime import date
+    
+    url = "https://bible.usccb.org/bible/readings/081625.cfm"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                status = response.status
+                content = await response.text()
+                content_length = len(content)
+                
+                # Parse HTML
+                soup = BeautifulSoup(content, 'html.parser')
+                
+                # Test title extraction
+                title_tag = soup.find('title')
+                title = title_tag.get_text().split('|')[0].strip() if title_tag else "Unknown"
+                
+                # Test H3 headings
+                headings = soup.find_all('h3')
+                h3_headers = [h.get_text(strip=True) for h in headings]
+                
+                # Test if we can find mass content keywords
+                all_text = soup.get_text()
+                keywords = ['Joshua', 'Gospel', 'Reading', 'Psalm']
+                keyword_results = {}
+                for keyword in keywords:
+                    keyword_results[keyword] = keyword.lower() in all_text.lower()
+                
+                # Also test the USCCB library
+                library_result = {}
+                try:
+                    async with USCCB() as usccb:
+                        mass = await usccb.get_today_mass()
+                        library_result = {
+                            "mass_found": mass is not None,
+                            "mass_title": getattr(mass, 'title', None) if mass else None,
+                            "sections_count": len(mass.sections) if mass and hasattr(mass, 'sections') else 0,
+                            "mass_url": getattr(mass, 'url', None) if mass else None
+                        }
+                except Exception as lib_error:
+                    library_result = {
+                        "error": str(lib_error),
+                        "mass_found": False
+                    }
+                
+                return {
+                    "url_test": {
+                        "url": url,
+                        "status": status,
+                        "content_length": content_length,
+                        "title": title,
+                        "h3_count": len(headings),
+                        "h3_headers": h3_headers,
+                        "keyword_results": keyword_results,
+                        "has_mass_content": any(keyword_results.values())
+                    },
+                    "library_test": library_result,
+                    "environment": {
+                        "railway_env": os.environ.get('RAILWAY_ENVIRONMENT', 'not_set'),
+                        "port": os.environ.get('PORT', 'not_set'),
+                        "python_version": sys.version
+                    }
+                }
+                
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "url": url
         }
 
 if __name__ == "__main__":
