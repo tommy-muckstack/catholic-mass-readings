@@ -4,7 +4,8 @@ import datetime
 from enum import Enum, EnumMeta, IntEnum, auto, unique
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
-from catholic_mass_readings import constants, utils
+import constants
+import utils
 
 if TYPE_CHECKING:
     import datetime

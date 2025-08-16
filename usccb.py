@@ -11,7 +11,9 @@ import aiohttp
 from bs4 import BeautifulSoup
 from typing_extensions import Self
 
-from catholic_mass_readings import constants, models, utils
+import constants
+import models
+import utils
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
