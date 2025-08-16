@@ -129,7 +129,8 @@ async def root():
     return {
         "message": "Catholic Mass Readings API",
         "status": "active",
-        "source": "USCCB via catholic-mass-readings library"
+        "source": "USCCB via catholic-mass-readings library",
+        "version": "1.1.0-debug"
     }
 
 @app.get("/health")
