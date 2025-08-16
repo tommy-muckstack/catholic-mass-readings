@@ -11,8 +11,8 @@ from datetime import datetime, date
 import logging
 import os
 
-# Import the catholic-mass-readings library
-from catholic_mass_readings import USCCB
+# Import the catholic-mass-readings library (local copy)
+from usccb import USCCB
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
