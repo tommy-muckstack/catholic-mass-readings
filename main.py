@@ -142,7 +142,11 @@ async def get_today_readings():
     try:
         async with USCCB() as usccb:
             mass = await usccb.get_today_mass()
+            if not mass:
+                raise HTTPException(status_code=404, detail="No mass readings found")
             return convert_mass_to_response(mass)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error fetching today's readings: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch readings: {str(e)}")
@@ -155,12 +159,40 @@ async def get_readings_by_date(date_str: str):
         
         async with USCCB() as usccb:
             mass = await usccb.get_mass_from_date(target_date)
+            if not mass:
+                raise HTTPException(status_code=404, detail="No mass readings found")
             return convert_mass_to_response(mass)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error fetching readings for {date_str}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch readings: {str(e)}")
+
+@app.get("/readings/{date_str}/alternates")
+async def get_alternate_readings(date_str: str):
+    """Get alternate readings for a specific date (saints, memorials, etc.)"""
+    try:
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        
+        async with USCCB() as usccb:
+            alternate_masses = await usccb.get_alternate_readings(target_date)
+            
+            results = []
+            for mass in alternate_masses:
+                results.append(convert_mass_to_response(mass))
+            
+            return {
+                "date": date_str,
+                "alternate_readings": results,
+                "count": len(results)
+            }
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    except Exception as e:
+        logger.error(f"Error fetching alternate readings for {date_str}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch alternate readings: {str(e)}")
 
 @app.get("/test")
 async def test_library():

@@ -169,6 +169,33 @@ class USCCB:
 
         return await self._get_mass(url, date, type_)
 
+    async def get_alternate_readings(self, date: datetime.date) -> list[models.Mass]:
+        """
+        Get alternate readings for a specific date (saints, memorials, etc.)
+        
+        Args:
+            date (datetime.date): The date to get alternate readings for
+            
+        Returns:
+            List of Mass objects for alternate readings found
+        """
+        alternate_masses = []
+        
+        # Generate potential alternate reading URLs
+        date_str = date.strftime('%m%d')  # MMDD format for alternate readings
+        
+        # Try the known pattern from the example
+        test_url = f"https://bible.usccb.org/bible/readings/{date_str}-memorial-stephen-hungary.cfm"
+        
+        try:
+            mass = await self.get_mass_from_url(test_url)
+            if mass:
+                alternate_masses.append(mass)
+        except Exception as e:
+            logger.debug(f"No alternate reading found at {test_url}: {e}")
+        
+        return alternate_masses
+
     async def get_mass_types(self, date: datetime.date) -> list[models.MassType]:
         """
         Gets the list of mass types for the specified date.
@@ -200,7 +227,85 @@ class USCCB:
         return models.Mass(date, type_, url, title.get_text(strip=True).split("|")[0].strip(), sections)
 
     def _get_sections(self, soup: BeautifulSoup) -> list[models.Section]:
-        """Parses the Sections (Readings 1, 2, Gospel, Psalms, etc)."""
+        """Parses the Sections (Readings 1, 2, Gospel, Psalms, etc) from current USCCB HTML structure."""
+        sections: list[models.Section] = []
+        
+        # Find all H3 headings which indicate reading sections
+        headings = soup.find_all('h3')
+        
+        for heading in headings:
+            header_text = heading.get_text(strip=True)
+            type_ = models.SectionType.from_header(header_text)
+            
+            # Get the content following this heading
+            content_paragraphs = []
+            current = heading.find_next_sibling()
+            
+            # Collect paragraphs until we hit the next heading or section
+            while current and current.name != 'h3':
+                if current.name == 'p':
+                    text = current.get_text(strip=True)
+                    if text and not text.startswith('Lectionary'):  # Skip footer content
+                        content_paragraphs.append(current)
+                current = current.find_next_sibling()
+            
+            # If no sibling paragraphs, look for the next paragraph in document order
+            if not content_paragraphs:
+                next_p = heading.find_next('p')
+                if next_p:
+                    text = next_p.get_text(strip=True)
+                    if text and not text.startswith('Lectionary'):
+                        content_paragraphs.append(next_p)
+            
+            if content_paragraphs:
+                # Extract readings from the paragraphs
+                readings = self._extract_readings_from_paragraphs(content_paragraphs)
+                if readings:
+                    section = models.Section(type_, header_text, readings)
+                    sections.append(section)
+        
+        # If no H3 headings found, try the old method as fallback
+        if not sections:
+            sections = self._get_sections_fallback(soup)
+        
+        return sections
+    
+    def _extract_readings_from_paragraphs(self, paragraphs: list) -> list[models.Reading]:
+        """Extract readings from a list of paragraph elements"""
+        readings = []
+        
+        for p in paragraphs:
+            text = p.get_text(strip=True)
+            if not text:
+                continue
+                
+            # Extract verses/links from the paragraph
+            verses = self._get_verses_from_paragraph(p)
+            
+            if text and len(text) > 10:  # Only include substantial content
+                reading = models.Reading(text, verses)
+                readings.append(reading)
+        
+        return readings
+    
+    def _get_verses_from_paragraph(self, paragraph) -> list[models.Verse]:
+        """Extract verses from a paragraph element"""
+        verses = []
+        
+        # Look for links to bible passages
+        links = paragraph.find_all('a', href=True)
+        for link in links:
+            href = link.get('href', '')
+            if 'bible.usccb.org/bible/' in href:
+                verse_text = link.get_text(strip=True)
+                # Create a verse object
+                verse = models.Verse(verse_text, href, {})
+                verses.append(verse)
+        
+        return verses
+    
+    def _get_sections_fallback(self, soup: BeautifulSoup) -> list[models.Section]:
+        """Fallback method using the original container-based approach"""
         sections: list[models.Section] = []
         prev_expects_children = False
         for container in utils.find_iter(soup, class_="container"):
@@ -227,9 +332,6 @@ class USCCB:
                         section = models.Section(type_, header, [reading])
                 else:
                     section = section.add_alternative(reading)
-
-            if section is None:
-                continue
 
             if sections and ((type_.is_unknown and prev_expects_children) or type_.is_alternative):
                 sections[-1] = sections[-1].add_alternative(section.readings)
