@@ -182,5 +182,23 @@ async def test_library():
 
 if __name__ == "__main__":
     import uvicorn
+    import sys
+    
+    # Get port from environment with Railway-friendly defaults
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    
+    print(f"Starting server on 0.0.0.0:{port}")
+    print(f"Python version: {sys.version}")
+    print(f"Environment: {os.environ.get('RAILWAY_ENVIRONMENT', 'development')}")
+    
+    try:
+        uvicorn.run(
+            app, 
+            host="0.0.0.0", 
+            port=port,
+            log_level="info",
+            access_log=True
+        )
+    except Exception as e:
+        print(f"Failed to start server: {e}")
+        sys.exit(1)
