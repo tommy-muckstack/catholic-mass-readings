@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from catholic_mass_readings import models
 from usccb import USCCB
 
 
@@ -205,6 +206,13 @@ def convert_mass_to_response(mass: Any) -> DailyReadingResponse:
 async def fetch_daily_reading(target_date: date_cls) -> DailyReadingResponse:
     async with USCCB() as usccb:
         mass = await usccb.get_mass_from_date(target_date)
+        if mass is None:
+            fallback_url = models.MassType.DEFAULT.to_url(target_date)
+            logger.info(
+                "Primary mass lookup returned none; trying fallback URL %s",
+                fallback_url,
+            )
+            mass = await usccb.get_mass_from_url(fallback_url)
     if not mass:
         raise HTTPException(status_code=404, detail="No mass readings found")
     return convert_mass_to_response(mass)
