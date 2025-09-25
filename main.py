@@ -232,6 +232,51 @@ async def health_check() -> Dict[str, str]:
     return {"status": "healthy", "service": "catholic-mass-readings-api"}
 
 
+@app.get("/debug")
+async def debug_endpoint() -> Dict[str, Any]:
+    """Debug endpoint to help diagnose deployment issues."""
+    import sys
+    
+    debug_info = {
+        "python_version": sys.version,
+        "working_directory": os.getcwd(),
+        "railway_environment": os.environ.get('RAILWAY_ENVIRONMENT', 'unknown'),
+        "port": os.environ.get('PORT', 'not_set'),
+    }
+    
+    # Test imports
+    try:
+        from catholic_mass_readings.usccb import USCCB as TestUSCCB
+        from catholic_mass_readings import models as test_models
+        debug_info["imports"] = "success"
+    except Exception as e:
+        debug_info["imports"] = f"failed: {str(e)}"
+        return debug_info
+    
+    # Test USCCB functionality
+    try:
+        test_date = datetime.now().date()
+        url = test_models.MassType.DEFAULT.to_url(test_date)
+        debug_info["url_generation"] = {"date": test_date.isoformat(), "url": url}
+        
+        async with TestUSCCB() as usccb:
+            mass = await usccb.get_mass_from_date(test_date)
+            if mass:
+                debug_info["scraper_test"] = {
+                    "success": True,
+                    "title": mass.title,
+                    "sections_count": len(mass.sections),
+                    "url": mass.url
+                }
+            else:
+                debug_info["scraper_test"] = {"success": False, "error": "No mass found"}
+                
+    except Exception as e:
+        debug_info["scraper_test"] = {"success": False, "error": str(e)}
+    
+    return debug_info
+
+
 @app.get("/readings", response_model=DailyReadingResponse)
 async def get_readings(date: str = Query(..., description="Date in YYYY-MM-DD format")) -> DailyReadingResponse:
     target_date = _parse_date(date)
