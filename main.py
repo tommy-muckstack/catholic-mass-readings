@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
-"""
-Simple FastAPI wrapper for catholic-mass-readings library - Railway deployment
-"""
+"""FastAPI wrapper that exposes catholic-mass-readings data over HTTP."""
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
-from datetime import datetime, date
+from __future__ import annotations
+
 import logging
 import os
 import sys
+from datetime import datetime, date as date_cls
+from typing import Any, Dict, List, Optional
 
-# Import the catholic-mass-readings library (local copy)
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
 from usccb import USCCB
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
 
 app = FastAPI(
     title="Catholic Mass Readings API",
-    description="REST API wrapper for catholic-mass-readings library",
-    version="1.0.0"
+    description="Lightweight REST wrapper around the catholic-mass-readings scraper",
+    version="1.1.0",
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -34,13 +34,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Response models
+
 class ReadingText(BaseModel):
     type: str
     title: str
     reference: str
     content: str
-    verses: Optional[List[Dict]] = []
+    verses: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class LiturgicalInfoResponse(BaseModel):
+    date: str
+    season: Optional[str] = ""
+    seasonWeek: Optional[int] = None
+    weekday: Optional[str] = ""
+    primaryCelebration: Optional[Dict[str, Any]] = None
+    liturgicalColor: Optional[str] = None
+    seasonDisplayName: Optional[str] = ""
+
 
 class DailyReadingResponse(BaseModel):
     id: str
@@ -49,8 +60,9 @@ class DailyReadingResponse(BaseModel):
     readingDate: str
     audioUrl: Optional[str] = None
     duration: Optional[str] = None
-    author: str = "USCCB"
+    author: str = "United States Conference of Catholic Bishops"
     subtitle: Optional[str] = None
+    liturgicalInfo: Optional[LiturgicalInfoResponse] = None
     firstReading: Optional[ReadingText] = None
     responsorialPsalm: Optional[ReadingText] = None
     secondReading: Optional[ReadingText] = None
@@ -58,268 +70,206 @@ class DailyReadingResponse(BaseModel):
     hasTextContent: bool = True
     hasAudio: bool = False
 
-def extract_reading_content(section) -> Optional[ReadingText]:
-    """Extract readable content from a mass section"""
-    if not section or not hasattr(section, 'readings') or not section.readings:
+def _parse_date(value: str) -> date_cls:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError as exc:  # pragma: no cover
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD") from exc
+
+def _build_reading(section: Any, slug: str) -> Optional[ReadingText]:
+    readings = getattr(section, "readings", None)
+    if not readings:
         return None
-    
-    # Combine all readings in the section
-    combined_text = ""
-    for reading in section.readings:
-        if hasattr(reading, 'text') and reading.text:
-            combined_text += reading.text.strip() + "\n\n"
-    
-    if not combined_text.strip():
+
+    reference_parts: List[str] = []
+    content_chunks: List[str] = []
+    verses: List[Dict[str, Any]] = []
+
+    for entry in readings:
+        header = getattr(entry, "header", "")
+        if header:
+            reference_parts.append(header)
+
+        text = getattr(entry, "text", "")
+        if text:
+            stripped = text.strip()
+            if stripped:
+                content_chunks.append(stripped)
+
+        for verse in getattr(entry, "verses", []):
+            verses.append({
+                "text": verse.text,
+                "link": verse.link,
+                "book": verse.book,
+            })
+
+    content = "\n\n".join(content_chunks).strip()
+    if not content:
         return None
-    
-    section_type = str(getattr(section, 'type_', 'Reading'))
-    header = getattr(section, 'header', section_type)
-    
+
+    reference = "; ".join(part for part in reference_parts if part)
+    display_title = getattr(section, "display_header", None) or getattr(section, "header", slug)
+
     return ReadingText(
-        type=section_type,
-        title=header,
-        reference=header,
-        content=combined_text.strip(),
-        verses=[]
+        type=slug,
+        title=display_title,
+        reference=reference,
+        content=content,
+        verses=verses,
     )
 
-def convert_mass_to_response(mass) -> DailyReadingResponse:
-    """Convert Mass object to API response"""
-    if not mass:
+def _slug_for_section(section: Any, *, first_taken: bool, second_taken: bool) -> Optional[str]:
+    section_type = str(getattr(section, "type_", "")).lower()
+    header = str(getattr(section, "header", "")).lower()
+
+    if "gospel" in section_type or "gospel" in header:
+        return "gospel"
+    if "psalm" in section_type or "psalm" in header:
+        return "responsorial_psalm"
+    if "second" in section_type or "second" in header:
+        return "second_reading"
+    if "reading" in section_type or "reading" in header:
+        return "second_reading" if first_taken and not second_taken else "first_reading"
+    return None
+
+def _build_liturgical_info(mass: Any, date_str: str) -> LiturgicalInfoResponse:
+    title = getattr(mass, "title", "") or ""
+    return LiturgicalInfoResponse(
+        date=date_str,
+        season="",
+        seasonWeek=None,
+        weekday=title,
+        primaryCelebration=None,
+        liturgicalColor=None,
+        seasonDisplayName=title,
+    )
+
+def convert_mass_to_response(mass: Any) -> DailyReadingResponse:
+    if mass is None:
         raise HTTPException(status_code=404, detail="No mass readings found")
-    
-    # Extract sections
+
     first_reading = None
     psalm = None
     second_reading = None
     gospel = None
-    
-    for section in mass.sections:
-        section_type = str(getattr(section, 'type_', '')).lower()
-        
-        if 'first' in section_type or ('reading' in section_type and not first_reading):
-            first_reading = extract_reading_content(section)
-        elif 'psalm' in section_type:
-            psalm = extract_reading_content(section)
-        elif 'second' in section_type:
-            second_reading = extract_reading_content(section)
-        elif 'gospel' in section_type:
-            gospel = extract_reading_content(section)
-    
-    # Generate response
-    mass_date = getattr(mass, 'date', date.today())
-    date_str = str(mass_date)
-    
-    return DailyReadingResponse(
-        id=f"usccb-{date_str}",
-        title=f"Mass Readings for {mass_date.strftime('%A, %B %d, %Y') if hasattr(mass_date, 'strftime') else date_str}",
-        description=getattr(mass, 'title', "Daily Mass readings from USCCB"),
+
+    first_taken = False
+    second_taken = False
+
+    for section in getattr(mass, "sections", []):
+        slug = _slug_for_section(section, first_taken=first_taken, second_taken=second_taken)
+        if slug is None:
+            continue
+
+        reading = _build_reading(section, slug)
+        if reading is None:
+            continue
+
+        if slug == "first_reading" and not first_taken:
+            first_reading = reading
+            first_taken = True
+        elif slug == "second_reading" and not second_taken:
+            second_reading = reading
+            second_taken = True
+        elif slug == "responsorial_psalm" and psalm is None:
+            psalm = reading
+        elif slug == "gospel" and gospel is None:
+            gospel = reading
+
+    mass_date = getattr(mass, "date", None)
+    date_str = mass_date.isoformat() if isinstance(mass_date, date_cls) else datetime.now().date().isoformat()
+    audio_url = getattr(mass, "podcast", None)
+    if isinstance(audio_url, dict):
+        audio_url = audio_url.get("url")
+
+    response = DailyReadingResponse(
+        id=getattr(mass, "url", f"usccb-{date_str}"),
+        title=getattr(mass, "title", "Daily Mass Readings"),
+        description=getattr(mass, "title", "Daily Mass readings from USCCB"),
         readingDate=date_str,
-        subtitle=getattr(mass, 'title', None),
+        audioUrl=audio_url,
+        duration=None,
+        author="United States Conference of Catholic Bishops",
+        subtitle=getattr(mass, "title", None),
+        liturgicalInfo=_build_liturgical_info(mass, date_str),
         firstReading=first_reading,
         responsorialPsalm=psalm,
         secondReading=second_reading,
         gospel=gospel,
-        hasTextContent=bool(first_reading or psalm or gospel)
     )
+    response.hasAudio = bool(response.audioUrl)
+    response.hasTextContent = any([first_reading, psalm, second_reading, gospel])
+    return response
+
+
+async def fetch_daily_reading(target_date: date_cls) -> DailyReadingResponse:
+    async with USCCB() as usccb:
+        mass = await usccb.get_mass_from_date(target_date)
+    if not mass:
+        raise HTTPException(status_code=404, detail="No mass readings found")
+    return convert_mass_to_response(mass)
+
 
 @app.get("/")
-async def root():
-    """Health check endpoint"""
+async def root() -> Dict[str, Any]:
     return {
         "message": "Catholic Mass Readings API",
         "status": "active",
-        "source": "USCCB via catholic-mass-readings library",
-        "version": "1.2.0-debug-rebuild"
+        "version": app.version,
     }
 
+
 @app.get("/health")
-async def health_check():
-    """Health check for Railway"""
+async def health_check() -> Dict[str, str]:
     return {"status": "healthy", "service": "catholic-mass-readings-api"}
 
+
+@app.get("/readings", response_model=DailyReadingResponse)
+async def get_readings(date: str = Query(..., description="Date in YYYY-MM-DD format")) -> DailyReadingResponse:
+    target_date = _parse_date(date)
+    return await fetch_daily_reading(target_date)
+
+
 @app.get("/readings/today", response_model=DailyReadingResponse)
-async def get_today_readings():
-    """Get today's mass readings"""
-    try:
-        async with USCCB() as usccb:
-            mass = await usccb.get_today_mass()
-            if not mass:
-                raise HTTPException(status_code=404, detail="No mass readings found")
-            return convert_mass_to_response(mass)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching today's readings: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch readings: {str(e)}")
+async def get_today_readings() -> DailyReadingResponse:
+    async with USCCB() as usccb:
+        mass = await usccb.get_today_mass()
+    if not mass:
+        raise HTTPException(status_code=404, detail="No mass readings found")
+    return convert_mass_to_response(mass)
+
 
 @app.get("/readings/{date_str}", response_model=DailyReadingResponse)
-async def get_readings_by_date(date_str: str):
-    """Get mass readings for a specific date (YYYY-MM-DD)"""
-    try:
-        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        
-        async with USCCB() as usccb:
-            mass = await usccb.get_mass_from_date(target_date)
-            if not mass:
-                raise HTTPException(status_code=404, detail="No mass readings found")
-            return convert_mass_to_response(mass)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching readings for {date_str}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch readings: {str(e)}")
+async def get_readings_by_date(date_str: str) -> DailyReadingResponse:
+    target_date = _parse_date(date_str)
+    return await fetch_daily_reading(target_date)
+
 
 @app.get("/readings/{date_str}/alternates")
-async def get_alternate_readings(date_str: str):
-    """Get alternate readings for a specific date (saints, memorials, etc.)"""
-    try:
-        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        
-        async with USCCB() as usccb:
-            alternate_masses = await usccb.get_alternate_readings(target_date)
-            
-            results = []
-            for mass in alternate_masses:
-                results.append(convert_mass_to_response(mass))
-            
-            return {
-                "date": date_str,
-                "alternate_readings": results,
-                "count": len(results)
-            }
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
-    except Exception as e:
-        logger.error(f"Error fetching alternate readings for {date_str}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch alternate readings: {str(e)}")
+async def get_alternate_readings(date_str: str) -> Dict[str, Any]:
+    target_date = _parse_date(date_str)
+    async with USCCB() as usccb:
+        masses = await usccb.get_alternate_readings(target_date)
 
-@app.get("/test")
-async def test_library():
-    """Test if the library is working"""
-    try:
-        async with USCCB() as usccb:
-            mass = await usccb.get_today_mass()
-            return {
-                "library_working": True,
-                "mass_found": mass is not None,
-                "mass_title": getattr(mass, 'title', None) if mass else None,
-                "sections_count": len(mass.sections) if mass and hasattr(mass, 'sections') else 0
-            }
-    except Exception as e:
-        return {
-            "library_working": False,
-            "error": str(e)
-        }
+    responses = [convert_mass_to_response(mass) for mass in masses]
+    return {
+        "date": date_str,
+        "alternate_readings": responses,
+        "count": len(responses),
+    }
 
-@app.get("/debug")
-async def debug_production():
-    """Debug endpoint to understand production environment issues"""
-    import aiohttp
-    from bs4 import BeautifulSoup
-    from datetime import date
-    
-    url = "https://bible.usccb.org/bible/readings/081625.cfm"
-    
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Accept-Encoding": "gzip, deflate, br",
-            "DNT": "1",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1"
-        }
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(url) as response:
-                status = response.status
-                content = await response.text()
-                content_length = len(content)
-                
-                # Parse HTML
-                soup = BeautifulSoup(content, 'html.parser')
-                
-                # Test title extraction
-                title_tag = soup.find('title')
-                title = title_tag.get_text().split('|')[0].strip() if title_tag else "Unknown"
-                
-                # Test H3 headings
-                headings = soup.find_all('h3')
-                h3_headers = [h.get_text(strip=True) for h in headings]
-                
-                # Test if we can find mass content keywords
-                all_text = soup.get_text()
-                keywords = ['Joshua', 'Gospel', 'Reading', 'Psalm']
-                keyword_results = {}
-                for keyword in keywords:
-                    keyword_results[keyword] = keyword.lower() in all_text.lower()
-                
-                # Also test the USCCB library
-                library_result = {}
-                try:
-                    async with USCCB() as usccb:
-                        mass = await usccb.get_today_mass()
-                        library_result = {
-                            "mass_found": mass is not None,
-                            "mass_title": getattr(mass, 'title', None) if mass else None,
-                            "sections_count": len(mass.sections) if mass and hasattr(mass, 'sections') else 0,
-                            "mass_url": getattr(mass, 'url', None) if mass else None
-                        }
-                except Exception as lib_error:
-                    library_result = {
-                        "error": str(lib_error),
-                        "mass_found": False
-                    }
-                
-                return {
-                    "url_test": {
-                        "url": url,
-                        "status": status,
-                        "content_length": content_length,
-                        "title": title,
-                        "h3_count": len(headings),
-                        "h3_headers": h3_headers,
-                        "keyword_results": keyword_results,
-                        "has_mass_content": any(keyword_results.values())
-                    },
-                    "library_test": library_result,
-                    "environment": {
-                        "railway_env": os.environ.get('RAILWAY_ENVIRONMENT', 'not_set'),
-                        "port": os.environ.get('PORT', 'not_set'),
-                        "python_version": sys.version
-                    }
-                }
-                
-    except Exception as e:
-        import traceback
-        return {
-            "error": str(e),
-            "traceback": traceback.format_exc(),
-            "url": url
-        }
 
 if __name__ == "__main__":
     import uvicorn
-    import sys
-    
-    # Get port from environment with Railway-friendly defaults
+
     port = int(os.environ.get("PORT", 8000))
-    
-    print(f"Starting server on 0.0.0.0:{port}")
-    print(f"Python version: {sys.version}")
-    print(f"Environment: {os.environ.get('RAILWAY_ENVIRONMENT', 'development')}")
-    
-    try:
-        uvicorn.run(
-            app, 
-            host="0.0.0.0", 
-            port=port,
-            log_level="info",
-            access_log=True
-        )
-    except Exception as e:
-        print(f"Failed to start server: {e}")
-        sys.exit(1)
+    logger.info("Starting server on 0.0.0.0:%s", port)
+    logger.info("Python version: %s", sys.version)
+    logger.info("Environment: %s", os.environ.get('RAILWAY_ENVIRONMENT', 'development'))
+
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=port,
+        log_level="info",
+    )

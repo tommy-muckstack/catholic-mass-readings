@@ -28,7 +28,24 @@ Run [scripts/lock.sh](../scripts/lock.sh)
 Run [scripts/console.sh](../scripts/console.sh) uv run python -m catholic_mass_readings
 
 
-## API Usage:
+## API Usage
+
+### HTTP service (Railway / FastAPI)
+
+The repository includes a FastAPI wrapper (`main.py`) that powers the Railway
+deployment. Once it's running, you can fetch readings by calling the `/readings`
+endpoint:
+
+```
+GET https://<your-railway-host>/readings?date=2025-09-24
+```
+
+The JSON mirrors Credo Chat's `DailyReading` model, including fields such as
+`firstReading`, `responsorialPsalm`, `secondReading`, and `gospel`. Use
+`/readings/today` for the current day or `/readings/{date}/alternates` to fetch
+optional memorial readings.
+
+### Python API
 
 ```python
 import asyncio
