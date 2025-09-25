@@ -204,18 +204,34 @@ def convert_mass_to_response(mass: Any) -> DailyReadingResponse:
 
 
 async def fetch_daily_reading(target_date: date_cls) -> DailyReadingResponse:
-    async with USCCB() as usccb:
-        mass = await usccb.get_mass_from_date(target_date)
-        if mass is None:
-            fallback_url = models.MassType.DEFAULT.to_url(target_date)
-            logger.info(
-                "Primary mass lookup returned none; trying fallback URL %s",
-                fallback_url,
-            )
-            mass = await usccb.get_mass_from_url(fallback_url)
-    if not mass:
-        raise HTTPException(status_code=404, detail="No mass readings found")
-    return convert_mass_to_response(mass)
+    logger.info(f"Fetching mass readings for date: {target_date}")
+    try:
+        async with USCCB() as usccb:
+            logger.info("USCCB context manager created successfully")
+            mass = await usccb.get_mass_from_date(target_date)
+            if mass is None:
+                fallback_url = models.MassType.DEFAULT.to_url(target_date)
+                logger.info(
+                    "Primary mass lookup returned none; trying fallback URL %s",
+                    fallback_url,
+                )
+                mass = await usccb.get_mass_from_url(fallback_url)
+                if mass:
+                    logger.info(f"Fallback URL worked: {mass.title}")
+                else:
+                    logger.error(f"Fallback URL also returned None for {fallback_url}")
+            else:
+                logger.info(f"Primary lookup worked: {mass.title}")
+        if not mass:
+            logger.error(f"No mass found for date {target_date}")
+            raise HTTPException(status_code=404, detail="No mass readings found")
+        logger.info("Converting mass to response format")
+        return convert_mass_to_response(mass)
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is
+    except Exception as e:
+        logger.error(f"Error fetching daily reading: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
 @app.get("/")
@@ -236,6 +252,7 @@ async def health_check() -> Dict[str, str]:
 async def debug_endpoint() -> Dict[str, Any]:
     """Debug endpoint to help diagnose deployment issues."""
     import sys
+    import traceback
     
     debug_info = {
         "python_version": sys.version,
@@ -249,32 +266,64 @@ async def debug_endpoint() -> Dict[str, Any]:
         from catholic_mass_readings.usccb import USCCB as TestUSCCB
         from catholic_mass_readings import models as test_models
         debug_info["imports"] = "success"
-    except Exception as e:
-        debug_info["imports"] = f"failed: {str(e)}"
-        return debug_info
-    
-    # Test USCCB functionality
-    try:
+        
+        # Test URL generation
         test_date = datetime.now().date()
         url = test_models.MassType.DEFAULT.to_url(test_date)
         debug_info["url_generation"] = {"date": test_date.isoformat(), "url": url}
         
-        async with TestUSCCB() as usccb:
-            mass = await usccb.get_mass_from_date(test_date)
-            if mass:
-                debug_info["scraper_test"] = {
-                    "success": True,
-                    "title": mass.title,
-                    "sections_count": len(mass.sections),
-                    "url": mass.url
-                }
-            else:
-                debug_info["scraper_test"] = {"success": False, "error": "No mass found"}
+        # Test USCCB context manager creation
+        try:
+            usccb = TestUSCCB()
+            debug_info["usccb_creation"] = "success"
+        except Exception as e:
+            debug_info["usccb_creation"] = f"failed: {str(e)}"
+            debug_info["usccb_creation_traceback"] = traceback.format_exc()
+            return debug_info
+        
+        # Test async context manager
+        try:
+            async with TestUSCCB() as usccb_context:
+                debug_info["usccb_context"] = "success"
                 
+                # Try to get mass
+                mass = await usccb_context.get_mass_from_date(test_date)
+                if mass:
+                    debug_info["scraper_test"] = {
+                        "success": True,
+                        "title": mass.title,
+                        "sections_count": len(mass.sections),
+                        "url": mass.url
+                    }
+                else:
+                    debug_info["scraper_test"] = {"success": False, "error": "No mass found"}
+                    
+        except Exception as e:
+            debug_info["usccb_context"] = f"failed: {str(e)}"
+            debug_info["usccb_context_traceback"] = traceback.format_exc()
+            
     except Exception as e:
-        debug_info["scraper_test"] = {"success": False, "error": str(e)}
+        debug_info["imports"] = f"failed: {str(e)}"
+        debug_info["import_traceback"] = traceback.format_exc()
     
     return debug_info
+
+
+@app.get("/test")
+async def simple_test() -> Dict[str, Any]:
+    """Simple test endpoint that doesn't use complex async operations."""
+    try:
+        from catholic_mass_readings import models
+        test_date = datetime.now().date()
+        url = models.MassType.DEFAULT.to_url(test_date)
+        return {
+            "status": "ok",
+            "date": test_date.isoformat(),
+            "generated_url": url,
+            "expected_url": f"https://bible.usccb.org/bible/readings/{test_date.strftime('%m%d%y')}.cfm"
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 @app.get("/readings", response_model=DailyReadingResponse)
