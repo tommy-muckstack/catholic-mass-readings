@@ -283,7 +283,7 @@ class USCCB:
             verses = self._get_verses_from_paragraph(p)
             
             if text and len(text) > 10:  # Only include substantial content
-                reading = models.Reading(text, verses)
+                reading = models.Reading(verses, text)
                 readings.append(reading)
         
         return readings
