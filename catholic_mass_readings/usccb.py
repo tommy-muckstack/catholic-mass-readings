@@ -188,6 +188,10 @@ class USCCB:
         self, url: str, date: datetime.date | None, type_: models.MassType | str | None
     ) -> models.Mass | None:
         logger.debug("Querying url: %s", url)
+        
+        # Add small delay to appear more human-like
+        await asyncio.sleep(0.5)
+        
         async with self._ensure_session().get(url, raise_for_status=True) as r:
             content = await r.text()
 
@@ -299,7 +303,19 @@ class USCCB:
         return self._session
 
     def _create_session(self) -> aiohttp.ClientSession:
+        import ssl
+        import certifi
+        
+        # Create SSL context with certifi certificates
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        
+        # Use more comprehensive browser-like headers and settings
+        connector = aiohttp.TCPConnector(ssl=ssl_context)
+        timeout = aiohttp.ClientTimeout(total=30, connect=10)
+        
         return aiohttp.ClientSession(
+            connector=connector,
+            timeout=timeout,
             headers={
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
@@ -307,5 +323,10 @@ class USCCB:
                 "Accept-Encoding": "gzip, deflate, br",
                 "Connection": "keep-alive",
                 "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Cache-Control": "max-age=0",
+                "Referer": "https://bible.usccb.org/",
             }
         )
