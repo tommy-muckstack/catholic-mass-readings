@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from catholic_mass_readings import models
-from usccb import USCCB
+from catholic_mass_readings.usccb import USCCB
 
 
 logger = logging.getLogger(__name__)
