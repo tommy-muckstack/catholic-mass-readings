@@ -5,9 +5,11 @@ import contextlib
 import datetime
 import html
 import logging
+import ssl
 from typing import TYPE_CHECKING, Final, cast
 
 import aiohttp
+import certifi
 from bs4 import BeautifulSoup
 from typing_extensions import Self
 
@@ -403,7 +405,9 @@ class USCCB:
         return self._session
 
     def _create_session(self) -> aiohttp.ClientSession:
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
         return aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(ssl=ssl_context),
             headers={
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",

@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 requests
 aiohttp>=3.11.11
+certifi>=2024.2.2
 bs4>=0.0.2
 aiofiles>=24.1.0
 asyncclick>=8.1.7.2
