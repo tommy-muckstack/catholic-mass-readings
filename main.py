@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 app = FastAPI(
     title="Catholic Mass Readings API",
     description="Lightweight REST wrapper around the catholic-mass-readings scraper",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 app.add_middleware(
