@@ -123,6 +123,9 @@ def _slug_for_section(section: Any, *, first_taken: bool, second_taken: bool) ->
     section_type = str(getattr(section, "type_", "")).lower()
     header = str(getattr(section, "header", "")).lower()
 
+    # Skip "Verse Before the Gospel" / "Alleluia" — these are not the Gospel reading
+    if "verse before" in header or "alleluia" in section_type or "alleluia" in header:
+        return None
     if "gospel" in section_type or "gospel" in header:
         return "gospel"
     if "psalm" in section_type or "psalm" in header:

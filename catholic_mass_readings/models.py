@@ -127,7 +127,7 @@ class SectionType(IntEnum):
     @classmethod
     def from_header(cls, header: str) -> SectionType:  # noqa: PLR0911
         header = header.casefold()
-        if "alleluia" in header:
+        if "alleluia" in header or "verse before" in header:
             return cls.ALLELUIA
         if "gospel" in header:
             return cls.GOSPEL
