@@ -148,8 +148,15 @@ class USCCB:
 
         for type_ in types:
             url = type_.to_url(date)
-            with contextlib.suppress(aiohttp.ClientResponseError):
+            try:
                 return await self._get_mass(url, date, type_)
+            except aiohttp.ClientResponseError as exc:
+                # Only 404 means "this mass type doesn't exist for the date" — keep trying.
+                # 403/429 mean USCCB is rate-limiting us; every extra attempt makes the
+                # block worse, so abort the fan-out and let the caller handle it.
+                if exc.status == 404:
+                    continue
+                raise
 
         logger.warning("No mass for date: %s, types: %s", date, types)
         return None

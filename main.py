@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
+import time
 from datetime import datetime, date as date_cls
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+import aiohttp
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -206,7 +209,85 @@ def convert_mass_to_response(mass: Any) -> DailyReadingResponse:
     return response
 
 
+# Readings for a given date never change, but USCCB aggressively rate-limits
+# per IP (a short burst earns a ~1 minute block), and all production traffic
+# leaves Railway from one egress IP. Cache each date's response in memory and
+# collapse concurrent fetches for the same date into a single upstream request.
+READINGS_CACHE_TTL_SECONDS = 12 * 60 * 60
+READINGS_CACHE_MAX_ENTRIES = 64
+
+# When USCCB returns 403/429 the whole egress IP is blocked for roughly a
+# minute; any request during that window both fails and extends our standing
+# with their WAF. Back off globally instead of retrying per request.
+UPSTREAM_COOLDOWN_SECONDS = 60
+
+_readings_cache: Dict[str, Tuple[float, DailyReadingResponse]] = {}
+_readings_locks: Dict[str, asyncio.Lock] = {}
+_upstream_blocked_until = 0.0
+
+
+def _cache_fresh(date_key: str) -> Optional[DailyReadingResponse]:
+    cached = _readings_cache.get(date_key)
+    if cached and time.monotonic() - cached[0] < READINGS_CACHE_TTL_SECONDS:
+        return cached[1]
+    return None
+
+
+def _cache_store(date_key: str, response: DailyReadingResponse) -> None:
+    _readings_cache[date_key] = (time.monotonic(), response)
+    while len(_readings_cache) > READINGS_CACHE_MAX_ENTRIES:
+        oldest_key = min(_readings_cache, key=lambda k: _readings_cache[k][0])
+        _readings_cache.pop(oldest_key, None)
+        _readings_locks.pop(oldest_key, None)
+
+
 async def fetch_daily_reading(target_date: date_cls) -> DailyReadingResponse:
+    date_key = target_date.isoformat()
+
+    cached = _cache_fresh(date_key)
+    if cached:
+        return cached
+
+    lock = _readings_locks.setdefault(date_key, asyncio.Lock())
+    async with lock:
+        cached = _cache_fresh(date_key)
+        if cached:
+            return cached
+
+        if time.monotonic() < _upstream_blocked_until:
+            return _stale_or_unavailable(date_key)
+
+        try:
+            response = await _fetch_daily_reading_from_usccb(target_date)
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                return _stale_or_unavailable(date_key, exc)
+            raise
+
+        _cache_store(date_key, response)
+        return response
+
+
+def _stale_or_unavailable(date_key: str, exc: Optional[HTTPException] = None) -> DailyReadingResponse:
+    """Serve an expired cache entry if we have one (entries are only evicted by
+    size, never deleted on expiry); otherwise surface a 503."""
+    stale = _readings_cache.get(date_key)
+    if stale:
+        logger.warning(
+            "Serving stale readings for %s (upstream unavailable: %s)",
+            date_key,
+            exc.detail if exc else "in cooldown",
+        )
+        return stale[1]
+    if exc:
+        raise exc
+    raise HTTPException(
+        status_code=503,
+        detail="Upstream readings source is rate-limiting; please retry shortly",
+    )
+
+
+async def _fetch_daily_reading_from_usccb(target_date: date_cls) -> DailyReadingResponse:
     logger.info(f"Fetching mass readings for date: {target_date}")
     try:
         async with USCCB() as usccb:
@@ -232,6 +313,19 @@ async def fetch_daily_reading(target_date: date_cls) -> DailyReadingResponse:
         return convert_mass_to_response(mass)
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is
+    except aiohttp.ClientResponseError as e:
+        if e.status in (403, 429):
+            global _upstream_blocked_until
+            _upstream_blocked_until = time.monotonic() + UPSTREAM_COOLDOWN_SECONDS
+            logger.warning(f"USCCB rate-limited request for {target_date}: {e.status}")
+            raise HTTPException(
+                status_code=503,
+                detail="Upstream readings source is rate-limiting; please retry shortly",
+            )
+        if e.status == 404:
+            raise HTTPException(status_code=404, detail="No mass readings found")
+        logger.error(f"USCCB request failed for {target_date}: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Upstream error: {e.status}")
     except Exception as e:
         logger.error(f"Error fetching daily reading: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
@@ -337,11 +431,7 @@ async def get_readings(date: str = Query(..., description="Date in YYYY-MM-DD fo
 
 @app.get("/readings/today", response_model=DailyReadingResponse)
 async def get_today_readings() -> DailyReadingResponse:
-    async with USCCB() as usccb:
-        mass = await usccb.get_today_mass()
-    if not mass:
-        raise HTTPException(status_code=404, detail="No mass readings found")
-    return convert_mass_to_response(mass)
+    return await fetch_daily_reading(USCCB.today())
 
 
 @app.get("/readings/{date_str}", response_model=DailyReadingResponse)
