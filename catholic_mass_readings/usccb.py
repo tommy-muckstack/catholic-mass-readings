@@ -339,15 +339,15 @@ class USCCB:
         connector = aiohttp.TCPConnector(ssl=ssl_context)
         timeout = aiohttp.ClientTimeout(total=30, connect=10)
 
-        # Identify honestly. USCCB's WAF flags browser user-agents that don't come
-        # from real browsers (the TLS fingerprint gives it away); plain non-browser
-        # clients are treated more leniently.
+        # Identify honestly. USCCB's WAF flags spoofed browser user-agents (the TLS
+        # fingerprint gives them away) and user-agents containing URLs; a plain
+        # name/version client string is treated leniently.
         return aiohttp.ClientSession(
             connector=connector,
             timeout=timeout,
             headers={
-                "User-Agent": "catholic-mass-readings/1.2 (+https://github.com/tommy-muckstack/catholic-mass-readings)",
-                "Accept": "text/html,application/xhtml+xml",
+                "User-Agent": "catholic-mass-readings/1.2",
+                "Accept": "*/*",
                 "Accept-Language": "en-US,en;q=0.9",
             }
         )
