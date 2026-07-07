@@ -8,7 +8,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, date as date_cls
+from datetime import datetime, date as date_cls, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
@@ -421,6 +421,30 @@ async def simple_test() -> Dict[str, Any]:
         }
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
+
+# Keep today's and tomorrow's readings warm so users never pay the upstream
+# fetch (or eat a 503 when USCCB happens to be rate-limiting at that moment).
+# Cache hits make the hourly pass free; failures are retried the next hour.
+WARM_INTERVAL_SECONDS = 60 * 60
+
+
+async def _warm_cache_loop() -> None:
+    while True:
+        for day_offset in (0, 1):
+            target = USCCB.today() + timedelta(days=day_offset)
+            try:
+                await fetch_daily_reading(target)
+            except HTTPException as exc:
+                logger.warning("Cache warm for %s failed: %s", target, exc.detail)
+            except Exception:
+                logger.exception("Cache warm for %s failed unexpectedly", target)
+        await asyncio.sleep(WARM_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def _start_cache_warmer() -> None:
+    asyncio.create_task(_warm_cache_loop())
 
 
 @app.get("/readings", response_model=DailyReadingResponse)

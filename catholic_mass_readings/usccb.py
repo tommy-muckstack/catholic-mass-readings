@@ -336,24 +336,18 @@ class USCCB:
         # Create SSL context with certifi certificates
         ssl_context = ssl.create_default_context(cafile=certifi.where())
         
-        # Use more comprehensive browser-like headers and settings
         connector = aiohttp.TCPConnector(ssl=ssl_context)
         timeout = aiohttp.ClientTimeout(total=30, connect=10)
-        
+
+        # Identify honestly. USCCB's WAF flags browser user-agents that don't come
+        # from real browsers (the TLS fingerprint gives it away); plain non-browser
+        # clients are treated more leniently.
         return aiohttp.ClientSession(
             connector=connector,
             timeout=timeout,
             headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+                "User-Agent": "catholic-mass-readings/1.2 (+https://github.com/tommy-muckstack/catholic-mass-readings)",
+                "Accept": "text/html,application/xhtml+xml",
                 "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Cache-Control": "max-age=0",
-                "Referer": "https://bible.usccb.org/",
             }
         )
