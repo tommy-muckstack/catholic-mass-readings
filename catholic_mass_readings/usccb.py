@@ -148,8 +148,15 @@ class USCCB:
 
         for type_ in types:
             url = type_.to_url(date)
-            with contextlib.suppress(aiohttp.ClientResponseError):
+            try:
                 return await self._get_mass(url, date, type_)
+            except aiohttp.ClientResponseError as exc:
+                # Only 404 means "this mass type doesn't exist for the date" — keep trying.
+                # 403/429 mean USCCB is rate-limiting us; every extra attempt makes the
+                # block worse, so abort the fan-out and let the caller handle it.
+                if exc.status == 404:
+                    continue
+                raise
 
         logger.warning("No mass for date: %s, types: %s", date, types)
         return None
@@ -329,24 +336,18 @@ class USCCB:
         # Create SSL context with certifi certificates
         ssl_context = ssl.create_default_context(cafile=certifi.where())
         
-        # Use more comprehensive browser-like headers and settings
         connector = aiohttp.TCPConnector(ssl=ssl_context)
         timeout = aiohttp.ClientTimeout(total=30, connect=10)
-        
+
+        # Identify honestly. USCCB's WAF flags spoofed browser user-agents (the TLS
+        # fingerprint gives them away) and user-agents containing URLs; a plain
+        # name/version client string is treated leniently.
         return aiohttp.ClientSession(
             connector=connector,
             timeout=timeout,
             headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+                "User-Agent": "catholic-mass-readings/1.2",
+                "Accept": "*/*",
                 "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Cache-Control": "max-age=0",
-                "Referer": "https://bible.usccb.org/",
             }
         )
