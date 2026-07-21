@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -476,6 +477,79 @@ async def get_alternate_readings(date_str: str) -> Dict[str, Any]:
         "alternate_readings": responses,
         "count": len(responses),
     }
+
+
+class ProperText(BaseModel):
+    kind: str  # entrance | communion | or | verse | other
+    reference: str = ""
+    text: str
+
+
+class CelebrationPropers(BaseModel):
+    celebration: str
+    propers: List[ProperText]
+
+
+class PropersResponse(BaseModel):
+    date: str
+    celebrations: List[CelebrationPropers]
+
+
+# Mass propers (entrance/communion antiphons) are fixed per liturgical day,
+# so they're served from a pre-harvested static dataset rather than scraped
+# at runtime. Re-run scripts/harvest_antiphons.py to extend coverage.
+PROPERS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "mass_propers.jsonl")
+
+
+def _load_propers() -> Dict[str, Dict[str, Any]]:
+    propers: Dict[str, Dict[str, Any]] = {}
+    try:
+        with open(PROPERS_PATH, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if row.get("celebrations"):
+                    propers[row["date"]] = row
+    except FileNotFoundError:
+        logger.warning("Propers dataset not found at %s", PROPERS_PATH)
+    logger.info("Loaded propers for %d days", len(propers))
+    return propers
+
+
+PROPERS_BY_DATE = _load_propers()
+
+
+def _propers_for_date(target_date: date_cls) -> PropersResponse:
+    row = PROPERS_BY_DATE.get(target_date.isoformat())
+    if row is None:
+        available = sorted(PROPERS_BY_DATE)
+        coverage = f"{available[0]} to {available[-1]}" if available else "empty"
+        raise HTTPException(
+            status_code=404,
+            detail=f"No propers for {target_date.isoformat()} (dataset covers {coverage})",
+        )
+    return PropersResponse(
+        date=row["date"],
+        celebrations=[
+            CelebrationPropers(
+                celebration=c["celebration"],
+                propers=[ProperText(**p) for p in c["propers"]],
+            )
+            for c in row["celebrations"]
+        ],
+    )
+
+
+@app.get("/propers/today", response_model=PropersResponse)
+async def get_today_propers() -> PropersResponse:
+    return _propers_for_date(USCCB.today())
+
+
+@app.get("/propers/{date_str}", response_model=PropersResponse)
+async def get_propers_by_date(date_str: str) -> PropersResponse:
+    return _propers_for_date(_parse_date(date_str))
 
 
 if __name__ == "__main__":
